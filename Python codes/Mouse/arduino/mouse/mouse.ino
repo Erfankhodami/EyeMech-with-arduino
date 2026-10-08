@@ -66,7 +66,7 @@ void loop() {
       int targetX = latestCoordCommand.substring(0, commaIndex).toInt();
       int targetY = latestCoordCommand.substring(commaIndex + 1).toInt();
       
-      if (targetX >= 40 && targetX <= 140 && targetY >= 10 && targetY <= 90) {
+      if (targetX >= 40 && targetX <= 140 && targetY >= 0 && targetY <= 90) {
         servoX.write(targetX);
         servoY.write(targetY);
       }

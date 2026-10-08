@@ -43,7 +43,7 @@ try:
         mouseY = max(0, min(mouseY, screen_height))
 
         angleX = map_value(mouseX, 0, screen_width, 40, 140)
-        angleY = map_value(mouseY, 0, screen_height, 50, 10)
+        angleY = map_value(mouseY, 0, screen_height, 40, 5)
 
         if angleX != last_angleX or angleY != last_angleY:
             payload = f"{angleX},{angleY}\n"
