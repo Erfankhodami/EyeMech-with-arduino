@@ -1,14 +1,34 @@
+import os
+import urllib.request
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+from mediapipe.tasks.python.vision import drawing_utils, HandLandmarksConnections
 import serial
 import time
 import random
 
-from mediapipe.python.solutions import hands as mp_hands
-from mediapipe.python.solutions import face_detection as mp_face
-from mediapipe.python.solutions import drawing_utils as mp_drawing
+# Model paths and URLs for Tasks API
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+HAND_MODEL_PATH = os.path.join(SCRIPT_DIR, "hand_landmarker.task")
+FACE_MODEL_PATH = os.path.join(SCRIPT_DIR, "blaze_face_short_range.tflite")
 
-# Update to your new COM port
+HAND_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
+
+def ensure_model(file_path, url):
+    """Downloads model file if it does not already exist."""
+    if not os.path.exists(file_path):
+        filename = os.path.basename(file_path)
+        print(f"Downloading model '{filename}'...")
+        urllib.request.urlretrieve(url, file_path)
+        print(f"Downloaded '{filename}'.")
+
+ensure_model(HAND_MODEL_PATH, HAND_MODEL_URL)
+ensure_model(FACE_MODEL_PATH, FACE_MODEL_URL)
+
+# Update to your COM port
 PORT = 'COM21'
 BAUD_RATE = 115200 
 
@@ -20,13 +40,23 @@ except Exception as e:
     print(f"Failed to connect: {e}")
     exit()
 
-# Initialize MediaPipe Modules
-mp_hands = mp.solutions.hands
-mp_face = mp.solutions.face_detection
-mp_drawing = mp.solutions.drawing_utils
+# Initialize MediaPipe Tasks Detectors
+hand_options = vision.HandLandmarkerOptions(
+    base_options=python.BaseOptions(model_asset_path=HAND_MODEL_PATH),
+    running_mode=vision.RunningMode.IMAGE,
+    num_hands=1,
+    min_hand_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
+hand_detector = vision.HandLandmarker.create_from_options(hand_options)
 
-hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7, max_num_hands=1)
-face_detection = mp_face.FaceDetection(min_detection_confidence=0.7)
+face_options = vision.FaceDetectorOptions(
+    base_options=python.BaseOptions(model_asset_path=FACE_MODEL_PATH),
+    running_mode=vision.RunningMode.IMAGE,
+    min_detection_confidence=0.7
+)
+face_detector = vision.FaceDetector.create_from_options(face_options)
+
 # Open webcam
 cap = cv2.VideoCapture(0)
 
@@ -40,7 +70,7 @@ else:
 def map_value(value, in_min, in_max, out_min, out_max):
     return int((value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min)
 
-def is_fist(hand_landmarks):
+def is_fist(landmarks):
     """Calculates if the hand is a fist by checking if finger tips are folded below their middle joints"""
     fingers_folded = 0
     tips = [8, 12, 16, 20] # Index, Middle, Ring, Pinky tips
@@ -49,7 +79,7 @@ def is_fist(hand_landmarks):
     for tip, pip in zip(tips, pips):
         # In OpenCV, Y increases as you go down the screen. 
         # If the tip is lower than the joint, the finger is curled.
-        if hand_landmarks.landmark[tip].y > hand_landmarks.landmark[pip].y:
+        if landmarks[tip].y > landmarks[pip].y:
             fingers_folded += 1
             
     # If 3 or more fingers are folded, classify as a fist
@@ -68,35 +98,40 @@ try:
         # Flip horizontally for selfie-view and convert colors
         frame = cv2.flip(frame, 1)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-        # Process frame
-        hand_results = hands.process(rgb_frame)
-        face_results = face_detection.process(rgb_frame)
+        # Process frame with Tasks API
+        hand_result = hand_detector.detect(mp_image)
+        face_result = face_detector.detect(mp_image)
 
         track_x, track_y = None, None
         fist_detected = False
 
         # 1. Prioritize Hand Tracking
-        if hand_results.multi_hand_landmarks:
-            for hand_landmarks in hand_results.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+        if hand_result.hand_landmarks:
+            for hand_landmarks in hand_result.hand_landmarks:
+                drawing_utils.draw_landmarks(
+                    frame,
+                    hand_landmarks,
+                    HandLandmarksConnections.HAND_CONNECTIONS
+                )
                 
                 # Check for fist
                 fist_detected = is_fist(hand_landmarks)
                 
                 # Use the center of the palm (landmark 9) for smoother eye tracking
-                palm_center = hand_landmarks.landmark[9]
+                palm_center = hand_landmarks[9]
                 track_x = int(palm_center.x * frame_width)
                 track_y = int(palm_center.y * frame_height)
 
         # 2. Fallback to Face Tracking if no hand is visible
-        elif face_results.detections:
-            for detection in face_results.detections:
-                bboxC = detection.location_data.relative_bounding_box
+        elif face_result.detections:
+            for detection in face_result.detections:
+                bbox = detection.bounding_box
                 
-                # Get center of the face bounding box
-                track_x = int((bboxC.xmin + bboxC.width / 2) * frame_width)
-                track_y = int((bboxC.ymin + bboxC.height / 2) * frame_height)
+                # Get center of the face bounding box (pixel coordinates in Tasks API)
+                track_x = int(bbox.origin_x + bbox.width / 2)
+                track_y = int(bbox.origin_y + bbox.height / 2)
                 
                 # Draw a dot on the face center
                 cv2.circle(frame, (track_x, track_y), 10, (255, 0, 0), cv2.FILLED)
@@ -146,4 +181,7 @@ finally:
     print("\nCleaning up...")
     cap.release()
     cv2.destroyAllWindows()
-    arduino.close()
+    if 'arduino' in locals() and arduino.is_open:
+        arduino.close()
+    hand_detector.close()
+    face_detector.close()

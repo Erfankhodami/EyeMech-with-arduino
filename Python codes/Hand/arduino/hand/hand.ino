@@ -95,7 +95,7 @@ void loop() {
 }
 
 void smoothClose() {
-  for (int step = 0; step <= 40; step += 2) {
+  for (int step = 0; step <= 40; step += 4) {
     topRight.write(100 + step);     // Opens 100 -> Closes 140
     topLeft.write(100 - step);      // Opens 100 -> Closes 60
     bottomRight.write(40 - step);   // Opens 40  -> Closes 0
@@ -105,7 +105,7 @@ void smoothClose() {
 }
 
 void smoothOpen() {
-  for (int step = 0; step <= 40; step += 2) {
+  for (int step = 0; step <= 40; step += 4) {
     topRight.write(140 - step);     // Closes 140 -> Opens 100
     topLeft.write(60 + step);       // Closes 60  -> Opens 100
     bottomRight.write(0 + step);    // Closes 0   -> Opens 40
